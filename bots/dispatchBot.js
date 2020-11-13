@@ -59,7 +59,7 @@ class DispatchBot extends ActivityHandler {
         });
 
         this.onMembersAdded(async (context, next) => {
-            const welcomeText = "Hi, this is ST Bot! How are you today?";
+            const welcomeText = "Hello, this is ST Bot! How are you today?";
             const membersAdded = context.activity.membersAdded;
 
             for (const member of membersAdded) {
@@ -82,10 +82,7 @@ class DispatchBot extends ActivityHandler {
                 await this.processSTQnA(context);
                 break;
             default:
-                console.log(`Dispatch unrecognized intent: ${intent}.`);
-                await context.sendActivity(
-                    `Dispatch unrecognized intent: ${intent}.`
-                );
+                await this.processSTQnA(context);
                 break;
         }
     }
@@ -107,6 +104,23 @@ class DispatchBot extends ActivityHandler {
         if (luisResult.entities.length > 0) {
             await context.sendActivity(
                 `STLUIS entities were found in the message: ${luisResult.entities
+                    .map((entityObj) => entityObj.entity)
+                    .join("\n\n")}.`
+            );
+        }
+    }
+
+    async processIntent(context, luisResult) {
+        console.log("processIntent");
+
+        const intent = luisResult.topScoringIntent.intent;
+        const score = luisResult.topScoringIntent.score;
+
+        await context.sendActivity(`Top intent ${intent}. Score ${score}`);
+
+        if (luisResult.entities.length > 0) {
+            await context.sendActivity(
+                `Happy entities were found in the message: ${luisResult.entities
                     .map((entityObj) => entityObj.entity)
                     .join("\n\n")}.`
             );
