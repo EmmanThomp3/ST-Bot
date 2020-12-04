@@ -1,11 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const { ActivityHandler } = require("botbuilder");
+const { ActivityHandler, MessageFactory } = require("botbuilder");
 const { LuisRecognizer, QnAMaker } = require("botbuilder-ai");
+const { ActionTypes, ActivityTypes } = require("botframework-schema");
 const firebaseAdmin = require("firebase-admin");
 const firestore = firebaseAdmin.firestore();
 const scoreData = firestore.collection("ScoreData");
+const summaryData = firestore.collection("SummaryData");
+const { v4: uuidv4 } = require("uuid");
+
+const intensityScores = {
+    "Happy": 1,
+    "Sad": 8
+}
+
+const sessions = {};
 
 class DispatchBot extends ActivityHandler {
     constructor() {
@@ -38,93 +48,96 @@ class DispatchBot extends ActivityHandler {
         this.onMessage(async (context, next) => {
             console.log("Processing Message Activity.");
 
-            // First, we use the dispatch model to determine which cognitive service (LUIS or QnA) to use.
-            const recognizerResult = await dispatchRecognizer.recognize(
-                context
-            );
+            if (context.activity.channelData.postBack && context.activity.text == "Finish") {
+                const id = context.activity.recipient.id;
+                const avgIntensity = sessions[id].map(s => s.intensity).reduce((a, b) => a + b) / sessions[id].length;
+                const avgScore = sessions[id].map(s => s.score).reduce((a, b) => a + b) / sessions[id].length;
+                const keywords = sessions[id].map(s => s.query);
+                await summaryData.add({
+                    avgIntensity,
+                    avgScore,
+                    keywords
+                })
 
-            await scoreData.add(recognizerResult.luisResult);
+                sessions[id] = [];
 
-            // Top intent tell us which cognitive service to use.
-            const intent = LuisRecognizer.topIntent(recognizerResult);
-
-            // Next, we call the dispatcher with the top intent.
-            await this.dispatchToTopIntentAsync(
-                context,
-                intent,
-                recognizerResult
-            );
+                await context.sendActivity({
+                    type: ActivityTypes.EndOfConversation
+                });
+            } else {
+                // First, we use the dispatch model to determine which cognitive service (LUIS or QnA) to use.
+                const recognizerResult = await dispatchRecognizer.recognize(
+                    context
+                );
+    
+                // Next, we call the dispatcher with the top intent.
+                await this.dispatchToTopIntentAsync(
+                    context,
+                    recognizerResult
+                );
+                await this.sendFinishAction(context);
+            }
 
             await next();
         });
 
         this.onMembersAdded(async (context, next) => {
-            const welcomeText = "Hello, this is ST Bot! How are you today?";
-            const membersAdded = context.activity.membersAdded;
+            const id = context.activity.recipient.id;
+            sessions[id] = [];
 
-            for (const member of membersAdded) {
-                if (member.id !== context.activity.recipient.id) {
-                    await context.sendActivity(welcomeText);
-                }
-            }
+            await this.sendWelcomeMessage(context);
 
             // By calling next() you ensure that the next BotHandler is run.
             await next();
         });
     }
 
-    async dispatchToTopIntentAsync(context, intent, recognizerResult) {
-        switch (intent) {
-            case "l_STLUIS":
-                await this.processSTLUIS(context, recognizerResult.luisResult);
-                break;
-            case "q_STKB":
-                await this.processSTQnA(context);
-                break;
-            default:
-                await this.processSTQnA(context);
-                break;
+    /**
+     * Send a welcome message along with suggested actions for the user to click.
+     * @param {TurnContext} turnContext A TurnContext instance containing all the data needed for processing this conversation turn.
+     */
+    async sendWelcomeMessage(turnContext) {
+        const { activity } = turnContext;
+
+        // Iterate over all new members added to the conversation.
+        for (const idx in activity.membersAdded) {
+            if (activity.membersAdded[idx].id !== activity.recipient.id) {
+                const welcomeMessage = `Hello, this is ST Bot! How are you today?`;
+                await turnContext.sendActivity(welcomeMessage);
+            }
         }
     }
 
-    async processSTLUIS(context, luisResult) {
-        console.log("processSTLUIS");
+    /**
+     * Send suggested actions to the user.
+     * @param {TurnContext} turnContext A TurnContext instance containing all the data needed for processing this conversation turn.
+     */
+    async sendFinishAction(turnContext) {
+        const cardActions = [
+            {
+                type: ActionTypes.PostBack ,
+                title: "Finish",
+                value: "Finish"
+            }
+        ];
 
-        // Retrieve LUIS result for Process Automation.
-        const result = luisResult.connectedServiceResult;
-        const intent = result.topScoringIntent.intent;
-
-        await context.sendActivity(`STLUIS top intent ${intent}.`);
-        await context.sendActivity(
-            `STLUIS intents detected:  ${luisResult.intents
-                .map((intentObj) => intentObj.intent)
-                .join("\n\n")}.`
-        );
-
-        if (luisResult.entities.length > 0) {
-            await context.sendActivity(
-                `STLUIS entities were found in the message: ${luisResult.entities
-                    .map((entityObj) => entityObj.entity)
-                    .join("\n\n")}.`
-            );
-        }
+        var reply = MessageFactory.suggestedActions(cardActions);
+        await turnContext.sendActivity(reply);
     }
 
-    async processIntent(context, luisResult) {
-        console.log("processIntent");
+    async dispatchToTopIntentAsync(context, recognizerResult) {
+        // Top intent tell us which cognitive service to use.
+        const { topScoringIntent, query } = recognizerResult.luisResult;
+        const { score, intent } = topScoringIntent;
+        const intensity = intensityScores[intent] | 0;
+        const id = context.activity.recipient.id;
 
-        const intent = luisResult.topScoringIntent.intent;
-        const score = luisResult.topScoringIntent.score;
+        await this.processSTQnA(context);
 
-        await context.sendActivity(`Top intent ${intent}. Score ${score}`);
-
-        if (luisResult.entities.length > 0) {
-            await context.sendActivity(
-                `Happy entities were found in the message: ${luisResult.entities
-                    .map((entityObj) => entityObj.entity)
-                    .join("\n\n")}.`
-            );
-        }
+        const data = { query, intent, score, intensity };
+        const docId = (8 - intensity) + "_" + uuidv4();
+        sessions[id].push( data );
+        await scoreData.doc(docId).set(data);
     }
 
     async processSTQnA(context) {
