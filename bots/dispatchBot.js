@@ -8,6 +8,7 @@ const firebaseAdmin = require("firebase-admin");
 const firestore = firebaseAdmin.firestore();
 const scoreData = firestore.collection("ScoreData");
 const summaryData = firestore.collection("SummaryData");
+const userData = firestore.collection("User Data");
 const { v4: uuidv4 } = require("uuid");
 
 const intensityScores = {
@@ -50,14 +51,23 @@ class DispatchBot extends ActivityHandler {
 
             if (context.activity.channelData.postBack && context.activity.text == "Finish") {
                 const id = context.activity.recipient.id;
+                const uid = context.activity.from.id;
                 const avgIntensity = sessions[id].map(s => s.intensity).reduce((a, b) => a + b) / sessions[id].length;
                 const avgScore = sessions[id].map(s => s.score).reduce((a, b) => a + b) / sessions[id].length;
                 const keywords = sessions[id].map(s => s.query);
                 await summaryData.add({
                     avgIntensity,
                     avgScore,
-                    keywords
-                })
+                    keywords,
+                    uid
+                });
+
+                const studentDoc = userData.doc(uid);
+                const studentData = (await studentDoc.get()).data();
+                await studentDoc.set({
+                    ...studentData,
+                    active: false
+                });
 
                 sessions[id] = [];
 
@@ -84,6 +94,14 @@ class DispatchBot extends ActivityHandler {
         this.onMembersAdded(async (context, next) => {
             const id = context.activity.recipient.id;
             sessions[id] = [];
+
+            const uid = context.activity.from.id;
+            const studentDoc = userData.doc(uid);
+            const studentData = (await studentDoc.get()).data();
+            await studentDoc.set({
+                ...studentData,
+                active: true
+            });
 
             await this.sendWelcomeMessage(context);
 
@@ -131,10 +149,11 @@ class DispatchBot extends ActivityHandler {
         const { score, intent } = topScoringIntent;
         const intensity = intensityScores[intent] | 0;
         const id = context.activity.recipient.id;
+        const uid = context.activity.from.id;
 
         await this.processSTQnA(context);
 
-        const data = { query, intent, score, intensity };
+        const data = { query, intent, score, intensity, uid };
         const docId = (8 - intensity) + "_" + uuidv4();
         sessions[id].push( data );
         await scoreData.doc(docId).set(data);
