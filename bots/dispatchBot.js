@@ -10,6 +10,8 @@ const scoreData = firestore.collection("ScoreData");
 const summaryData = firestore.collection("SummaryData");
 const userData = firestore.collection("User Data");
 const { v4: uuidv4 } = require("uuid");
+const cryptoJS = require("crypto-js");
+const key = "strengthtogether2020";
 
 const intensityScores = {
     "Happy": 1,
@@ -55,12 +57,28 @@ class DispatchBot extends ActivityHandler {
                 const avgIntensity = sessions[id].map(s => s.intensity).reduce((a, b) => a + b) / sessions[id].length;
                 const avgScore = sessions[id].map(s => s.score).reduce((a, b) => a + b) / sessions[id].length;
                 const keywords = sessions[id].map(s => s.query);
-                await summaryData.add({
-                    avgIntensity,
-                    avgScore,
-                    keywords,
-                    uid
-                });
+                const data = { avgIntensity, avgScore, keywords, uid };
+                const encrypted = cryptoJS.AES.encrypt(JSON.stringify(data), key).toString();
+                const snapshot = await summaryData.get();
+
+                if (snapshot.empty) {
+                    await summaryData.add({ encrypted });
+                } else {
+                    const docId = null;
+                    for (const doc of snapshot.docs) {
+                        const data = doc.data();
+                        const json = JSON.parse(cryptoJS.AES.decrypt(data.encrypted, key).toString());
+                        if (json.uid == uid) {
+                            docId = doc.id;
+                            break;
+                        }
+                    }
+                    if (docId) {
+                        await summaryData.doc(docId).set({ encrypted })
+                    } else {
+                        await summaryData.add({ encrypted });
+                    }
+                }
 
                 const studentDoc = userData.doc(uid);
                 const studentData = (await studentDoc.get()).data();
@@ -156,7 +174,9 @@ class DispatchBot extends ActivityHandler {
         const data = { query, intent, score, intensity, uid };
         const docId = (8 - intensity) + "_" + uuidv4();
         sessions[id].push( data );
-        await scoreData.doc(docId).set(data);
+
+        const encrypted = cryptoJS.AES.encrypt(JSON.stringify(data), key).toString();
+        await scoreData.doc(docId).set({ encrypted });
     }
 
     async processSTQnA(context) {
