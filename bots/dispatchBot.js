@@ -67,7 +67,7 @@ class DispatchBot extends ActivityHandler {
                     const docId = null;
                     for (const doc of snapshot.docs) {
                         const data = doc.data();
-                        const json = JSON.parse(cryptoJS.AES.decrypt(data.encrypted, key).toString());
+                        const json = JSON.parse(cryptoJS.AES.decrypt(data.encrypted, key).toString(cryptoJS.enc.Utf8));
                         if (json.uid == uid) {
                             docId = doc.id;
                             break;
@@ -81,11 +81,14 @@ class DispatchBot extends ActivityHandler {
                 }
 
                 const studentDoc = userData.doc(uid);
-                const studentData = (await studentDoc.get()).data();
-                await studentDoc.set({
-                    ...studentData,
-                    active: false
-                });
+                const studentDocSnapshot = await studentDoc.get();
+                if (studentDocSnapshot.exists) {
+                    const studentData = studentDocSnapshot.data();
+                    await studentDoc.set({
+                        ...studentData,
+                        active: false
+                    });
+                }
 
                 sessions[id] = [];
 
@@ -115,11 +118,14 @@ class DispatchBot extends ActivityHandler {
 
             const uid = context.activity.from.id;
             const studentDoc = userData.doc(uid);
-            const studentData = (await studentDoc.get()).data();
-            await studentDoc.set({
-                ...studentData,
-                active: true
-            });
+            const studentDocSnapshot = await studentDoc.get();
+            if (studentDocSnapshot.exists) {
+                const studentData = studentDocSnapshot.data();
+                await studentDoc.set({
+                    ...studentData,
+                    active: true
+                });
+            }
 
             await this.sendWelcomeMessage(context);
 
