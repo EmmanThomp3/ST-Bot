@@ -64,11 +64,11 @@ class DispatchBot extends ActivityHandler {
                 if (snapshot.empty) {
                     await summaryData.add({ encrypted });
                 } else {
-                    const docId = null;
+                    let docId = null;
                     for (const doc of snapshot.docs) {
                         const data = doc.data();
                         const json = JSON.parse(cryptoJS.AES.decrypt(data.encrypted, key).toString(cryptoJS.enc.Utf8));
-                        if (json.uid == uid) {
+                        if (json.uid === uid) {
                             docId = doc.id;
                             break;
                         }
